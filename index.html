@@ -1,0 +1,601 @@
+
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DasviMotion | DasviGames</title>
+
+<script type="importmap">
+{
+ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+ }
+}
+</script>
+
+<style>
+* {
+ box-sizing: border-box;
+}
+
+body {
+ margin: 0;
+ background: #090909;
+ color: white;
+ font-family: Arial, sans-serif;
+}
+
+header {
+ background: #111;
+ padding: 16px;
+ border-bottom: 3px solid red;
+ display: flex;
+ align-items: center;
+ gap: 12px;
+}
+
+header img {
+ width: 48px;
+ height: 48px;
+ object-fit: contain;
+}
+
+header h2 {
+ margin: 0;
+}
+
+header span {
+ color: red;
+}
+
+main {
+ max-width: 1100px;
+ margin: auto;
+ padding: 18px;
+}
+
+h1 {
+ font-size: 32px;
+}
+
+.subtitle {
+ color: #aaa;
+}
+
+.grid {
+ display: grid;
+ grid-template-columns: 1fr 1fr;
+ gap: 15px;
+}
+
+.panel {
+ background: #181818;
+ border: 1px solid #383838;
+ border-radius: 12px;
+ padding: 14px;
+ min-width: 0;
+}
+
+h3 {
+ margin-top: 0;
+}
+
+.viewer {
+ height: 400px;
+ background: #050505;
+ border-radius: 8px;
+ overflow: hidden;
+}
+
+#modelCanvas {
+ width: 100%;
+ height: 100%;
+ display: block;
+}
+
+video {
+ width: 100%;
+ border-radius: 8px;
+ transform: scaleX(-1);
+ background: black;
+ display: none;
+}
+
+button, .upload {
+ background: red;
+ color: white;
+ border: 0;
+ border-radius: 7px;
+ padding: 12px;
+ margin: 5px 2px;
+ font-weight: bold;
+ cursor: pointer;
+}
+
+.secondary {
+ background: #333;
+}
+
+input[type=file] {
+ display: none;
+}
+
+#skeleton {
+ width: 100%;
+ height: 190px;
+ background: #050505;
+ border-radius: 8px;
+}
+
+.status {
+ color: #ccc;
+ font-size: 13px;
+ margin-top: 10px;
+}
+
+.full {
+ grid-column: 1 / -1;
+}
+
+footer {
+ text-align: center;
+ padding: 25px;
+ color: #777;
+}
+
+@media(max-width:700px) {
+ .grid {
+  grid-template-columns: 1fr;
+ }
+ .full {
+  grid-column: auto;
+ }
+ .viewer {
+  height: 340px;
+ }
+}
+</style>
+</head>
+
+<body>
+
+<header>
+<img src="logo.png" alt="DasviMotion"
+ onerror="this.style.display='none'">
+<h2>Dasvi<span>Motion</span></h2>
+</header>
+
+<main>
+
+<h1>Tu movimiento. Tu personaje.</h1>
+
+<p class="subtitle">
+Captura de movimiento 3D de DasviGames.
+</p>
+
+<div class="grid">
+
+<section class="panel">
+<h3>1. Personaje 3D</h3>
+
+<div class="viewer">
+<canvas id="modelCanvas"></canvas>
+</div>
+
+<label class="upload">
+Importar modelo GLB
+<input type="file" id="modelFile" accept=".glb,.gltf">
+</label>
+
+<button class="secondary" id="center">
+Centrar modelo
+</button>
+
+<button class="secondary" id="rig" disabled>
+Ver esqueleto
+</button>
+
+<div class="status" id="modelStatus">
+Esperando personaje...
+</div>
+</section>
+
+<section class="panel">
+<h3>2. Captura corporal</h3>
+
+<video id="video" autoplay playsinline muted></video>
+
+<div id="cameraMessage" class="status">
+Cámara apagada.
+</div>
+
+<button id="startCamera">
+Iniciar cámara
+</button>
+
+<button class="secondary" id="stopCamera" disabled>
+Detener cámara
+</button>
+
+<p class="status">
+Coloca la tablet de forma estable y procura que tu cuerpo aparezca completo.
+</p>
+</section>
+
+<section class="panel full">
+<h3>3. Articulaciones detectadas</h3>
+
+<canvas id="skeleton" width="900" height="190"></canvas>
+
+<div class="status" id="poseStatus">
+Esperando detección...
+</div>
+</section>
+
+</div>
+
+</main>
+
+<footer>
+DasviMotion © DasviGames
+</footer>
+
+<script type="module">
+
+import * as THREE from 'three';
+
+import { GLTFLoader } from
+'https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/loaders/GLTFLoader.js';
+
+import { OrbitControls } from
+'https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/controls/OrbitControls.js';
+
+import {
+ FilesetResolver,
+ PoseLandmarker
+} from 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/+esm';
+
+// ESCENA 3D
+
+const canvas = document.getElementById('modelCanvas');
+
+const renderer = new THREE.WebGLRenderer({
+ canvas,
+ antialias: true
+});
+
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(canvas.clientWidth, canvas.clientHeight, false);
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x050505);
+
+const camera3D = new THREE.PerspectiveCamera(
+ 40,
+ canvas.clientWidth / canvas.clientHeight,
+ 0.1,
+ 1000
+);
+
+camera3D.position.set(0, 1, 5);
+
+const controls = new OrbitControls(camera3D, renderer.domElement);
+
+scene.add(new THREE.HemisphereLight(0xffffff, 0x555555, 2));
+
+const light = new THREE.DirectionalLight(0xffffff, 2);
+light.position.set(3, 5, 5);
+scene.add(light);
+
+scene.add(new THREE.GridHelper(5, 10));
+
+let character = null;
+let skeletonHelper = null;
+
+const loader = new GLTFLoader();
+
+function centerModel() {
+ if (!character) return;
+
+ const box = new THREE.Box3().setFromObject(character);
+ const size = box.getSize(new THREE.Vector3());
+ const center = box.getCenter(new THREE.Vector3());
+
+ character.position.sub(center);
+
+ const distance = Math.max(size.x, size.y, size.z, 1);
+
+ camera3D.position.set(0, distance * 0.3, distance * 2.8);
+ controls.target.set(0, 0, 0);
+ controls.update();
+}
+
+// IMPORTAR GLB
+
+document.getElementById('modelFile').onchange = function(e) {
+
+ const file = e.target.files[0];
+
+ if (!file) return;
+
+ if (!/\.(glb|gltf)$/i.test(file.name)) {
+  document.getElementById('modelStatus').textContent =
+  'Selecciona un archivo GLB o GLTF.';
+  return;
+ }
+
+ const url = URL.createObjectURL(file);
+
+ loader.load(url, function(gltf) {
+
+  if (character) scene.remove(character);
+  if (skeletonHelper) scene.remove(skeletonHelper);
+
+  character = gltf.scene;
+  scene.add(character);
+
+  centerModel();
+
+  let bones = 0;
+
+  character.traverse(obj => {
+   if (obj.isSkinnedMesh && obj.skeleton) {
+    bones = Math.max(bones, obj.skeleton.bones.length);
+   }
+  });
+
+  skeletonHelper = new THREE.SkeletonHelper(character);
+  skeletonHelper.visible = false;
+  scene.add(skeletonHelper);
+
+  document.getElementById('rig').disabled = bones === 0;
+
+  document.getElementById('modelStatus').textContent =
+  'Modelo cargado: ' + file.name +
+  ' | Huesos: ' + bones;
+
+  URL.revokeObjectURL(url);
+
+ }, undefined, function(error) {
+
+  document.getElementById('modelStatus').textContent =
+  'Error al cargar el modelo: ' + error.message;
+
+  URL.revokeObjectURL(url);
+ });
+
+};
+
+document.getElementById('center').onclick = centerModel;
+
+document.getElementById('rig').onclick = function() {
+
+ if (!skeletonHelper) return;
+
+ skeletonHelper.visible = !skeletonHelper.visible;
+
+ this.textContent = skeletonHelper.visible
+ ? 'Ocultar esqueleto'
+ : 'Ver esqueleto';
+
+};
+
+// RENDERIZADO
+
+function resize() {
+
+ const w = canvas.clientWidth;
+ const h = canvas.clientHeight;
+
+ renderer.setSize(w, h, false);
+
+ camera3D.aspect = w / h;
+ camera3D.updateProjectionMatrix();
+}
+
+window.addEventListener('resize', resize);
+
+function animate() {
+
+ requestAnimationFrame(animate);
+
+ controls.update();
+ renderer.render(scene, camera3D);
+}
+
+animate();
+
+// CAPTURA CORPORAL
+
+const video = document.getElementById('video');
+const poseCanvas = document.getElementById('skeleton');
+const ctx = poseCanvas.getContext('2d');
+
+let stream = null;
+let detector = null;
+let active = false;
+let lastTime = -1;
+
+const connections = [
+ [11,12],
+ [11,13],[13,15],
+ [12,14],[14,16],
+ [11,23],[12,24],
+ [23,24],
+ [23,25],[25,27],
+ [24,26],[26,28],
+ [27,29],[29,31],
+ [28,30],[30,32]
+];
+
+function drawPose(points) {
+
+ ctx.clearRect(0, 0, 900, 190);
+ ctx.fillStyle = '#050505';
+ ctx.fillRect(0, 0, 900, 190);
+
+ if (!points) return;
+
+ const p = points.map(v => ({
+  x: v.x * 900,
+  y: v.y * 190,
+  visible: v.visibility ?? 1
+ }));
+
+ ctx.strokeStyle = '#ff2020';
+ ctx.lineWidth = 5;
+
+ connections.forEach(([a,b]) => {
+
+  if (p[a].visible < 0.35 || p[b].visible < 0.35) return;
+
+  ctx.beginPath();
+  ctx.moveTo(p[a].x, p[a].y);
+  ctx.lineTo(p[b].x, p[b].y);
+  ctx.stroke();
+
+ });
+
+ ctx.fillStyle = 'white';
+
+ p.forEach(point => {
+
+  if (point.visible < 0.35) return;
+
+  ctx.beginPath();
+  ctx.arc(point.x, point.y, 5, 0, Math.PI * 2);
+  ctx.fill();
+
+ });
+
+}
+
+async function startCamera() {
+
+ try {
+
+  if (!navigator.mediaDevices?.getUserMedia) {
+   throw new Error('Necesitas abrir la página desde HTTPS.');
+  }
+
+  document.getElementById('cameraMessage').textContent =
+  'Solicitando permiso...';
+
+  stream = await navigator.mediaDevices.getUserMedia({
+   video: {
+    facingMode: 'user',
+    width: 640,
+    height: 480
+   },
+   audio: false
+  });
+
+  video.srcObject = stream;
+
+  await video.play();
+
+  video.style.display = 'block';
+
+  if (!detector) {
+
+   document.getElementById('cameraMessage').textContent =
+   'Cargando detector corporal...';
+
+   const vision = await FilesetResolver.forVisionTasks(
+    'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm'
+   );
+
+   detector = await PoseLandmarker.createFromOptions(vision, {
+
+    baseOptions: {
+     modelAssetPath:
+     'https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task',
+     delegate: 'GPU'
+    },
+
+    runningMode: 'VIDEO',
+    numPoses: 1
+
+   });
+
+  }
+
+  active = true;
+
+  document.getElementById('startCamera').disabled = true;
+  document.getElementById('stopCamera').disabled = false;
+
+  document.getElementById('cameraMessage').textContent =
+  'Cámara activa.';
+
+  detectPose();
+
+ } catch(error) {
+
+  document.getElementById('cameraMessage').textContent =
+  'Error: ' + error.message;
+
+  stopCamera();
+
+ }
+
+}
+
+function detectPose() {
+
+ if (!active) return;
+
+ if (video.readyState >= 2 && video.currentTime !== lastTime) {
+
+  lastTime = video.currentTime;
+
+  const result = detector.detectForVideo(
+   video,
+   performance.now()
+  );
+
+  const points = result.landmarks?.[0];
+
+  drawPose(points);
+
+  document.getElementById('poseStatus').textContent =
+  points ? 'Cuerpo detectado.' : 'No se detecta ningún cuerpo.';
+
+ }
+
+ requestAnimationFrame(detectPose);
+
+}
+
+function stopCamera() {
+
+ active = false;
+
+ if (stream) {
+  stream.getTracks().forEach(track => track.stop());
+  stream = null;
+ }
+
+ video.srcObject = null;
+ video.style.display = 'none';
+
+ document.getElementById('startCamera').disabled = false;
+ document.getElementById('stopCamera').disabled = true;
+
+ document.getElementById('cameraMessage').textContent =
+ 'Cámara detenida.';
+
+}
+
+document.getElementById('startCamera').onclick = startCamera;
+document.getElementById('stopCamera').onclick = stopCamera;
+
+drawPose(null);
+
+</script>
+
+</body>
+</html>
